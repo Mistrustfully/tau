@@ -1,0 +1,11 @@
+hello a b =
+    "Hello"
+    : String -> String -> String
+
+main =
+    # Errors
+    # hello 1 2
+    # Works
+    hello "A" "B"
+    # Type sig optional
+    # : String

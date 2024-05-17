@@ -1,0 +1,121 @@
+use crate::frontend::ast::{Expr, Statement, Ast, Operator, Literal, Identifier, TypeExpr};
+use crate::frontend::lexer::{LexicalError, Token};
+use crate::location::Location;
+use lalrpop_util::ErrorRecovery;
+
+grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<Location, Token<'input>, LexicalError>>);
+
+extern {
+    type Location = crate::location::Location;
+    type Error = LexicalError;
+
+    enum Token<'input> {
+        "=" => Token::Equal,
+        "(" => Token::LParen,
+        ")" => Token::RParen,
+        "`" => Token::Grave,
+        "->" => Token::RightArrow,
+        "\\" => Token::Backslash, 
+        ":" => Token::Colon,
+
+        "import" => Token::Import,
+
+        "string literal" => Token::Literal(Literal::String(<&'input str>)),
+        "float literal" => Token::Literal(Literal::Float(<f32>)),
+        "int literal" => Token::Literal(Literal::Int(<i32>)),
+        "bool literal" => Token::Literal(Literal::Bool(<bool>)),
+
+        "identifier" => Token::Identifier(<&'input str>),
+        "operator" => Token::Operator(<&'input str>),
+
+        "open block" => Token::OpenBlock,
+        "close block" => Token::CloseBlock,
+        ";" => Token::Semicolon,
+    }
+}
+
+pub Ast: Ast<'input> = {
+    Statement* => Ast(<>)
+};
+
+pub Statement: Statement<'input> = {
+    "import" <i: "string literal"> => Statement::Import(i),
+    <i:Identifier> <p:Identifier*> "=" <e:Expr> <t:(":" <TypeExpr>)?> ";" => Statement::Declaration {
+        name: i,
+        patterns: p,
+        expr: *e,
+        sig: t,
+    }
+};
+
+pub Expr: Box<Expr<'input>> = {
+    PrefixExpr,
+    ! => { errors.push(<>); Box::new(Expr::Error) },
+};
+
+PrefixExpr: Box<Expr<'input>> = {
+    InfixExpr,
+    <lhs: Operator> <rhs: PrefixExpr> => Box::new(Expr::Prefix(lhs, rhs))
+}
+
+InfixExpr: Box<Expr<'input>> = {
+    LambdaExpr,
+    <lhs: AtomicExpr> <op: Operator> <rhs: PrefixExpr> => Box::new(Expr::Infix {lhs, op, rhs })
+};
+
+LambdaExpr: Box<Expr<'input>> = {
+    ApplicationExpr,
+    "\\" <p:Identifier+> "->" <e:Expr> => Box::new(Expr::Lambda { params:p, func: e })
+};
+
+ApplicationExpr: Box<Expr<'input>> = {
+    AtomicExpr,
+    <lhs: ApplicationExpr> <rhs: AtomicExpr> => Box::new(Expr::Application { lhs, rhs })   
+};
+
+AtomicExpr: Box<Expr<'input>> = {
+    Literal => Box::new(Expr::Literal(<>)),
+    Identifier => Box::new(Expr::Identifier(<>)),
+    "(" <Expr> ")" => <>
+};
+
+Operator: Operator<'input> = { 
+    "operator" => Operator(<>),
+    "`" <i:Identifier> "`" => Operator(i.0)
+};
+
+Identifier: Identifier<'input> = { 
+    "identifier" => Identifier(<>),
+    "(" <e:Operator> ")" => Identifier(e.0)
+};
+
+Literal: Literal<'input> = {
+    "string literal" => Literal::String(<>),
+    "float literal" => Literal::Float(<>),
+    "int literal" => Literal::Int(<>),
+    "bool literal" => Literal::Bool(<>)
+};
+
+pub TypeExpr: TypeExpr = {
+    #[precedence(level = "0")]
+    ! => { errors.push(<>); TypeExpr::Error },
+    TypeLiteral,
+
+    #[precedence(level = "1")] #[assoc(side = "right")]
+    <lhs: TypeExpr> "->" <rhs: TypeExpr> => TypeExpr::Fn {
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    }
+}
+
+pub TypeLiteral: TypeExpr = {
+    "identifier" => match <> {
+        "Bool" => TypeExpr::Bool,
+        "Int" => TypeExpr::Int,
+        "Float" => TypeExpr::Float,
+        "String" => TypeExpr::String,
+        _ => TypeExpr::Empty,
+    },
+    "(" ")" => TypeExpr::Empty,
+    "(" <TypeExpr> ")" => <>,
+}
